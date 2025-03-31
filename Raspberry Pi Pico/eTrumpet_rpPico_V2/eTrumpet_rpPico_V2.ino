@@ -9,10 +9,11 @@ const int i2sLRPin = 19;      // I2S word select pin (WS)
 
 #define SINE_TABLE_SIZE 256   
 #define SAMPLE_RATE 44100      // Sampling rate
-#define DEFAULT_FREQ 440       // A4 note
+#define DEFAULT_FREQ 698.46      // A4 note
 #define MAX_VOLUME 0.003    // Keep this between 0.001 and 0.014 ALWAYS
+#define MAX_HARMONICS 6  // Number of harmonics to add (the length of the harmonics array)
 
-const float harmonics[] = {1.0, 0.5, 0.3, 0.2, 0.15, 0.1};
+const float harmonics[] = {1.0, 0.5, 0.3, 0.2, 0.15, 0.1}; // Weights for each harmonic
 
 uint16_t sineTable[SINE_TABLE_SIZE];
 float currentPhase = 0.0;
@@ -35,7 +36,7 @@ void setup() {
   // Generate trumpet-like wave with harmonics
   for (int i = 0; i < SINE_TABLE_SIZE; i++) {
     float sample = 0;
-    for (int h = 0; h < 6; h++) {
+    for (int h = 0; h < MAX_HARMONICS; h++) {
       sample += harmonics[h] * sin(2.0 * PI * (h + 1) * i / SINE_TABLE_SIZE);
     }
     sineTable[i] = (uint16_t)((32767.5 * (1.0 + sample / 2.0)));

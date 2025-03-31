@@ -1,3 +1,6 @@
+#ifndef PICO2_I2S_H
+#define PICO2_I2S_H
+
 // Test code for I2S audio
 
 #include <Arduino.h>
@@ -9,8 +12,7 @@ const int i2sLRPin = 19;      // I2S word select pin (WS)
 
 #define SINE_TABLE_SIZE 256   
 #define SAMPLE_RATE 44100      // Sampling rate
-#define DEFAULT_FREQ 698       // A4 note
-#define MAX_VOLUME 0.003    // Keep this between 0.001 and 0.014 ALWAYS
+#define MAX_VOLUME 0.003    // Keep this between 0.003 and 0.014 ALWAYS
 
 const float harmonics[] = {1.0, 0.5, 0.3, 0.2, 0.15, 0.1}; // Weights for overtones
 
@@ -31,7 +33,9 @@ float phaseIncrement = 0.0;
 float volume = MAX_VOLUME;
 
 unsigned long previousMicros = 0;
-const unsigned long sampleInterval = 1000000 / SAMPLE_RATE;  
+const unsigned long sampleInterval = 1000000 / SAMPLE_RATE; 
+
+float frequency = 440; // Track current frequency
 
 I2S i2s(OUTPUT, i2sClockPin, i2sDataPin);
 
@@ -46,10 +50,15 @@ void i2sSetup() {
   }
 
   // Correctly compute phase increment per sample
-  phaseIncrement = (float)SINE_TABLE_SIZE * DEFAULT_FREQ / SAMPLE_RATE;
+  phaseIncrement = (float)SINE_TABLE_SIZE * frequency / SAMPLE_RATE;
 }
 
-void loop() {
+void setFrequency(float freq) {
+  frequency = freq;
+  phaseIncrement = (float)SINE_TABLE_SIZE * frequency / SAMPLE_RATE;
+}
+
+void i2sLoop() {
   unsigned long currentMicros = micros();
   
   if (currentMicros - previousMicros >= sampleInterval) {
@@ -66,3 +75,5 @@ void loop() {
     currentPhase = fmod(currentPhase + phaseIncrement, SINE_TABLE_SIZE);
   }
 }
+
+#endif
