@@ -9,7 +9,7 @@
 
 #define SINE_TABLE_SIZE 256
 #define SAMPLE_RATE 44100      // Sampling rate
-#define MAX_VOLUME 0.005    // Keep this between 0.001 and 0.014 ALWAYS
+#define MAX_VOLUME 0.01    // Keep this between 0.001 and 0.014 ALWAYS
 #define MAX_HARMONICS 6  // Number of harmonics to add (the length of the harmonics array)
 
 // Pressure sensor I2C pins
