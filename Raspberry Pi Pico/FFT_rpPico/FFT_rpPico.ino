@@ -99,5 +99,11 @@ void loop() {
   Serial.print(peakFrequency);
   Serial.println("</PEAK>");
 
-  delay(50); // Comment out if visualization is not in use
+  int peakIndex = (int)((peakFrequency * SAMPLES) / SAMPLING_FREQUENCY);
+  double peakAmplitude = vReal[peakIndex];
+
+  Serial.print("Amplitude: ");
+  Serial.println(vReal[peakIndex], 4);
+
+  delay(100); // Comment out if visualization is not in use
 }
