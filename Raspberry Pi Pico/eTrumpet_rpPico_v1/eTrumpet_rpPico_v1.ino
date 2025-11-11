@@ -65,7 +65,7 @@ void loop() {
   for (int i = 0; i < SAMPLES; i++) {
     // Wait until next sample time
     while (micros() < nextSampleTime) {
-      asm volatile ("nop\n\t"); // Fine-grained waiting
+      asm volatile ("nop\n\t");
     }
     
     // Record actual timestamp
@@ -93,7 +93,7 @@ void loop() {
   // Write FFT data to serial for the visualizer
   Serial.print("<FFT>");
   for (int i = 0; i < SAMPLES / 2; i++) {
-    Serial.print(vReal[i], 4); // Limit decimal places
+    Serial.print(vReal[i], 4);
     if (i < SAMPLES / 2 - 1) {
       Serial.print(",");
     }
@@ -128,7 +128,7 @@ void loop() {
     currentFrequency = 0;
   }
 
-  delay(50); // Comment out if visualization is not in use
+  delay(50);
 }
 
 // Returns the frequency closest to that obtained from the FFT
@@ -148,7 +148,6 @@ const int computeOutput(const int fftFrequency, const int harmonicSeries) {
   return outputFreq;
 }
 
-// Manually create PWM for Raspberry Pi Pico
 void play(int frequency) {
   if (frequency == 0) {
     analogWriteFreq(0);

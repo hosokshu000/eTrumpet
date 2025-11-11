@@ -3,11 +3,11 @@
 #include "PressureSensor.h" // Pressure sensor reading library
 #include <Wire.h>
 
-#define SAMPLES 128 // Must be a power of 2 (e.g., 64, 128, etc.)
-#define SAMPLING_FREQUENCY 1850.0f // Sampling frequency in Hz
+#define SAMPLES 128 // Must be a power of 2
+#define SAMPLING_FREQUENCY 1850.0f // Sampling frequency
 
 float vReal[SAMPLES];  // Real part of FFT input
-float vImag[SAMPLES];  // Imaginary part (initialize to 0)
+float vImag[SAMPLES];  // Imaginary part 
 ArduinoFFT<float> FFT = ArduinoFFT<float>(vReal, vImag, SAMPLES, SAMPLING_FREQUENCY);
 
 void setup() {

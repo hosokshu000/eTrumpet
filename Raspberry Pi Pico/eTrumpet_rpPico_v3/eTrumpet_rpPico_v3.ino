@@ -6,23 +6,31 @@
 
 
 // FFT Macros
-#define SAMPLES 256 // Must be a power of 2
-#define SAMPLING_FREQUENCY 4500.0f // FFT sampling frequency
-// Adjustment needed
-#define MIN_AMPLITUDE 1
-#define MAX_AMPLITUDE 15
+#define SAMPLES 64 // Must be a power of 2
+#define SAMPLING_FREQUENCY 5000.0f // FFT sampling frequency
+// Adjustment needed - CHANGES WITH SAMPLES AND SAMPLING FREQUENCY, as well as tubing length
+#define MIN_AMPLITUDE 0.40
+#define MAX_AMPLITUDE 3.80
+#define NOISE_AMPLITUDE 0.42
 
 
 // I2S Macros
 #define SINE_TABLE_SIZE 256
 #define SAMPLE_RATE 44100 // Sampling rate
-#define MAX_VOLUME 0.017 // Keep this between 0.001 and 0.017 ALWAYS
-#define MIN_VOLUME 0.001
+#define MAX_VOLUME 0.014 // Keep this between 0.001 and 0.014 ALWAYS
+#define MIN_VOLUME 0.002
 #define MAX_HARMONICS 6 // Number of harmonics to add (the length of the harmonics array)
+
+// Threshold for valve press detection (adjust as needed)
+#define VALVE_PRESS 550
+
+
+// Required consecutive changed pitch reading for the output to change (reduce sensor misread)
+#define PITCH_CHANGE_REQ 3
 
 
 // GPIO Setup
-const uint8_t valvePins[] = {13, 12, 11}; // Buttons for the valves
+const uint8_t valvePins[] = {26, 27, 28}; // Inputs for the valves
 const int i2sDataPin = 20; // I2S data pin (DOUT)
 const int i2sClockPin = 18; // I2S bit clock pin (BCLK)
 const int i2sLRPin = 19; // I2S word select pin (WS)
@@ -56,7 +64,11 @@ const uint8_t SCL_PIN = 15;
 volatile float currentFreq = 0;
 volatile float prevFreq = 0;
 volatile bool changeFreq = false; // Flag to communicate frequency change between loops
-float zeroFreqInc = (float)SINE_TABLE_SIZE * 440 / SAMPLE_RATE; // Frequency to send zero values (if this is just 0, signal won't be grounded)
+float zeroFreqInc = (float)SINE_TABLE_SIZE * 440 / SAMPLE_RATE; // Frequency to send zero values
+float originalFreq = 0; // Holds previous pitch during pitch filtering
+float candidateFreq = 0; // Holds new candidate pitch
+int pitchChangeCount = 0; // Keep track of consecutive changed pitch readings to avoid sensor misread
+bool filteringPitch = false; // Flag to indicate whether a new frequency is getting filtered or not
 
 
 // Audio output variables
@@ -77,14 +89,15 @@ const float harmonics[MAX_HARMONICS] = {1.0, 0.5, 0.3, 0.2, 0.15, 0.1}; // Weigh
 
 // Volume decay variables
 unsigned long noteReleaseStartTime = 0;  // Time when the note started decaying
+float originalVolume = 0;
 float initialVolume = 0;  // Volume when release starts
 bool isNoteReleasing = false;  // Flag to check if the note is being released
-float decayRate = 0.0001;  // Adjust this value for faster/slower decay (higher = faster decay)
+float decayRate = 0.00005;
 float prevVolume = 0;
 float releasedFreq = 0;
 
 
-// Debugging actual sampling frequency of FFT
+// Debugging FFT
 void printTimingStats() {
   unsigned long totalInterval = 0;
   unsigned long minInterval = UINT32_MAX;
@@ -204,6 +217,7 @@ void setup1() {
   delay(1000);
 }
 
+
 // Core 0: I2S Handling
 void loop() {
   // Check flag and update frequency
@@ -211,53 +225,47 @@ void loop() {
     currentFreq = detectedFreq;
     changeFreq = false;
 
-    // Update phase increment if frequency changed, only if note is not being released
-    if (prevFreq != currentFreq && !isNoteReleasing) {
+    if (currentFreq != prevFreq) {
+      filteringPitch = true;
+      originalFreq = prevFreq;
+      originalVolume = prevVolume;
+      candidateFreq = currentFreq;
+      pitchChangeCount = 1;
+    }
+
+    if (filteringPitch) {
+      if (currentFreq == candidateFreq) {
+        pitchChangeCount++;
+
+        if (pitchChangeCount >= PITCH_CHANGE_REQ) {
+          filteringPitch = false;
+          pitchChangeCount = 0;
+        }
+      }
+      else {
+        filteringPitch = false;
+        pitchChangeCount = 0;
+      }
+    }
+
+    // Update phase increment if frequency changed, only if note is not being released. Check to ensure pitch is filtered
+    if (currentFreq != originalFreq && !isNoteReleasing && !filteringPitch) {
       phaseIncrement = (float)SINE_TABLE_SIZE * currentFreq / SAMPLE_RATE;
     }
+
+    volume = min(ampToVol(amplitude), MAX_VOLUME); // Amplitude to volume
   }
   
+  // Audio generation timing
   unsigned long currentMicros = micros();
   
-  if (currentMicros - previousMicros >= sampleInterval) {
+  if (currentMicros - previousMicros >= sampleInterval && volume > MIN_VOLUME) {
     previousMicros += sampleInterval;
 
     uint16_t scaledValue = 0; // Send 0s when there's no frequency 
     uint16_t sineValue = sineTable[(int)currentPhase];
 
-    if (currentFreq != 0) {
-      isNoteReleasing = false; // Interrupt release
-      volume = clamp(ampToVol(amplitude), (float)MIN_VOLUME, (float) MAX_VOLUME); // Update right before sending signal to avoid unwanted noise      
-      currentPhase = fmod(currentPhase + phaseIncrement, SINE_TABLE_SIZE);
-    }
-    else if (prevFreq != 0) {
-      noteReleaseStartTime = micros();
-      initialVolume = prevVolume;  // Store the current volume as the initial value
-      volume = prevVolume;
-      releasedFreq = prevFreq;
-      isNoteReleasing = true;
-
-      Serial.println("Released");
-      phaseIncrement = (float)SINE_TABLE_SIZE * releasedFreq / SAMPLE_RATE; // Maintain frequency during release
-      currentPhase = fmod(currentPhase + phaseIncrement, SINE_TABLE_SIZE);
-    }
-    else if(isNoteReleasing) {
-      unsigned long timeElapsed = currentMicros - noteReleaseStartTime;
-      volume = exponentialDecay(initialVolume, decayRate, timeElapsed);
-      currentPhase = fmod(currentPhase + phaseIncrement, SINE_TABLE_SIZE);
-
-      Serial.print("Volume: ");
-      Serial.println(volume, 5);
-
-      if (volume < 0.0001) {
-        volume = 0;
-        phaseIncrement = zeroFreqInc;
-        isNoteReleasing = false;  // End the release phase
-
-        Serial.println("End release");
-      }
-    }
-
+    currentPhase = fmod(currentPhase + phaseIncrement, SINE_TABLE_SIZE); // Update phase
     scaledValue = sineValue * volume;
 
     i2s.write(scaledValue);
@@ -278,7 +286,6 @@ void loop1() {
 
   // Populate FFT array
   for (int i = 0; i < SAMPLES; i++) {
-    // Wait until next sample time
     while (micros() < nextSampleTime) {}
 
     sampleTimestamps[i] = micros();
@@ -303,15 +310,16 @@ void loop1() {
 
   // Initially set frequency and volume to 0
   detectedFreq = 0;
-
-  numSemitones = 2 * digitalRead(valvePins[0]) + digitalRead(valvePins[1]) + 3 * digitalRead(valvePins[2]); // Calculate the number of semitones to go down from FFT.majorPeak()
+  amplitude = getMaxAmp(vReal);
+  numSemitones = 2 * (analogRead(valvePins[0]) > VALVE_PRESS) + (analogRead(valvePins[1]) > VALVE_PRESS) + 3 * (analogRead(valvePins[2]) > VALVE_PRESS); // Calculate the number of semitones to go down from FFT.majorPeak()
   
-  // Ignore all frequencies (noise) below 100 Hz
-  if (FFT.majorPeak() > 100) {
-    // Compute output frequency and output volume
+  // Filter out noise using amplitude
+  if (amplitude > NOISE_AMPLITUDE) {
     detectedFreq = computeOutput(FFT.majorPeak(), numSemitones);
-    amplitude = clamp(getMaxAmp(vReal), (float)MIN_AMPLITUDE, (float)MAX_AMPLITUDE);
+  }
+  else {
+    amplitude = 0; // Filter out noise
   }
 
-  changeFreq = true;
+  changeFreq = true; // Flag for loop0 to update
 }

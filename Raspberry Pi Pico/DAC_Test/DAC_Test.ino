@@ -2,14 +2,14 @@
 #include <Arduino.h>
 #include <I2S.h>
 
-const int i2sDataPin = 20;    // I2S data pin (DOUT)
+const int i2sDataPin = ;    // I2S data pin (DOUT)
 const int i2sClockPin = 18;   // I2S bit clock pin (BCLK)
 const int i2sLRPin = 19;      // I2S word select pin (WS)
 
 #define SINE_TABLE_SIZE 256   
 #define SAMPLE_RATE 44100      // Sampling rate
-#define DEFAULT_FREQ 440       // A4 note
-#define MAX_VOLUME 0.003    // Keep this between 0.001 and 0.014 ALWAYS
+#define DEFAULT_FREQ 440       
+#define MAX_VOLUME 0.002    // Keep this between 0.001 and 0.014 ALWAYS
 
 const float harmonics[] = {1.0, 0.5, 0.3, 0.2, 0.15, 0.1};
 

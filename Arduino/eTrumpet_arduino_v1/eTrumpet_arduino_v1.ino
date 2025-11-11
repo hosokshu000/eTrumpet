@@ -7,7 +7,7 @@
 #define SAMPLING_FREQUENCY 1850.0f  // Sampling frequency in Hz
 
 float vReal[SAMPLES];  // Real part of FFT input
-float vImag[SAMPLES];  // Imaginary part (initialize to 0)
+float vImag[SAMPLES];  // Imaginary part
 ArduinoFFT<float> FFT = ArduinoFFT<float>(vReal, vImag, SAMPLES, SAMPLING_FREQUENCY);
 
 // Pin setup

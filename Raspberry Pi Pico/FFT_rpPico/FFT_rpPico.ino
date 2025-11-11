@@ -4,7 +4,7 @@
 #include <Wire.h>
 
 #define SAMPLES 256                 // Must be a power of 2
-#define SAMPLING_FREQUENCY 3000.0f  // Sampling frequency in Hz
+#define SAMPLING_FREQUENCY 3000.0f  // Sampling frequency
 
 // FFT arrays
 float vReal[SAMPLES];
@@ -21,7 +21,6 @@ void setup() {
   initialize(14, 15);
   Serial.begin(115200);
   
-  // Wait for serial to be ready
   while (!Serial) {
     delay(10);
   }
@@ -50,7 +49,6 @@ void printTimingStats() {
 }
 
 void loop() {
-  // Disable interrupts during sampling to enhance precision
   noInterrupts();
   
   unsigned long startTime = micros();
@@ -72,7 +70,6 @@ void loop() {
     nextSampleTime = startTime + (i + 1) * SAMPLING_PERIOD_US;
   }
   
-  // Re-enable interrupts
   interrupts();
 
   // Print timing statistics
@@ -86,7 +83,7 @@ void loop() {
   // Write FFT data to serial for the visualizer
   Serial.print("<FFT>");
   for (int i = 0; i < SAMPLES / 2; i++) {
-    Serial.print(vReal[i], 4); // Limit decimal places
+    Serial.print(vReal[i], 4);
     if (i < SAMPLES / 2 - 1) {
       Serial.print(",");
     }
@@ -105,5 +102,5 @@ void loop() {
   Serial.print("Amplitude: ");
   Serial.println(vReal[peakIndex], 4);
 
-  delay(100); // Comment out if visualization is not in use
+  delay(100);
 }
