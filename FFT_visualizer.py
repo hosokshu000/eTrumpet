@@ -2,17 +2,17 @@ import serial
 import matplotlib.pyplot as plt
 import numpy as np
 
-SERIAL_PORT = "/dev/cu.usbmodem14101" # Arduino port
+SERIAL_PORT = "/dev/cu.usbmodem14201" # Arduino port
 BAUD_RATE = 115200 # Arduino baud rate
 
 # Number of FFT bins
-NUM_SAMPLES = 256
-SAMPLING_FREQUENCY = 3000 # The same as in the Arduino code
+NUM_SAMPLES = 128
+SAMPLING_FREQUENCY = 5000 # The same as in the Arduino code
 FREQ_MAX = 1500 # Maximum frequency to display (Hz)
 TICK_INTERVAL = 100 # Frequency interval between ticks (Hz)
 
 def parse_fft_data(data):
-    """Parse FFT data wrapped in <FFT>...</FFT>."""
+    #Parse FFT data wrapped in <FFT>...</FFT>.
     if "<FFT>" in data and "</FFT>" in data:
         start = data.index("<FFT>") + len("<FFT>")
         end = data.index("</FFT>")
@@ -26,7 +26,7 @@ def parse_fft_data(data):
     return None
 
 def parse_peak_data(data):
-    """Parse peak frequency data wrapped in <PEAK>...</PEAK>."""
+    #Parse peak frequency data wrapped in <PEAK>...</PEAK>.
     if "<PEAK>" in data and "</PEAK>" in data:
         start = data.index("<PEAK>") + len("<PEAK>")
         end = data.index("</PEAK>")
@@ -39,7 +39,7 @@ def parse_peak_data(data):
     return None
 
 def get_frequency_for_bin(bin_index, sampling_frequency, num_samples):
-    """Convert a frequency bin index to its corresponding frequency."""
+    #Convert a frequency bin index to its corresponding frequency.
     return (bin_index * sampling_frequency) / num_samples
 
 def main():

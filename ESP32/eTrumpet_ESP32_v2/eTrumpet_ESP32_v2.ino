@@ -9,8 +9,8 @@
 // FFT Macros
 #define SAMPLES 128
 #define SAMPLING_FREQUENCY 5000.0f
-#define MIN_AMPLITUDE 0.50
-#define MAX_AMPLITUDE 5.00
+#define MIN_AMPLITUDE 0.30
+#define MAX_AMPLITUDE 2.00
 #define PRESSURE_BIAS 0.0105 // Pressure sensor bias
 
 
@@ -23,8 +23,9 @@
 
 
 // Thresholds
-#define VALVE_PRESS 2300
-#define PITCH_CHANGE_REQ 3
+#define VALVE_PRESS 2300 // Hall effect sensor threshold for valve on/off
+#define PITCH_CHANGE_REQ 1 // Number of consecutive frequency readings required to change pitch (increasing this increases "resistance" of instrument)
+#define OVERTONE_THRES 2.9 // Fundamental x 2 / Fundamental must be over this threshold for the fundamental x 2 frequency to be considered the fundamental
 
 
 // GPIO Setup
@@ -90,41 +91,52 @@ float originalFreq = 0;
 float candidateFreq = 0;
 
 
+// Debug timer
+unsigned long lastHarmonicPrint = 0;
+
+
+// Potentiometer parameter
+int param = 0;
+int prevParam = 0;
+
+
 // Prevent value corruption between two cores
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
 
-// Returns the frequency of the note closest to FFT output
-float computeOutput(float fftFrequency, int harmonicSeries) {
-  // Add bounds checking
-  if (harmonicSeries < 0 || harmonicSeries >= 7) {
-    harmonicSeries = 0;
-  }
-  
-  float minDiff = abs(fftFrequency - frequencyChart[harmonicSeries][0]);
-  float outputFreq = frequencyChart[harmonicSeries][0];
+// Returns the frequency and amplitude of the most prominent pitch of the current harmonic series, based on the FFT output (vReal array)
+float* getTargetFreqAndAmp(int harmonicSeries) {
+  static float out[2];  // {frequency, amplitude}
+  float freqToCheck = frequencyChart[harmonicSeries][0]; // Frequency being compared
+  int bin = round(freqToCheck * SAMPLES / SAMPLING_FREQUENCY); // Index of freqToCheck in vReal array
+  float maxAmp = vReal[bin]; // Initialize to the first harmonic frequency amplitude
+  float targetFreq = frequencyChart[harmonicSeries][0];
+
+  // Overtone filter-related variables
+  float pFundFreq = 0;
+  int binFund = 0;
 
   for (int i = 1; i < 7; i++) {
-    float diff = abs(fftFrequency - frequencyChart[harmonicSeries][i]);
-    if (diff < minDiff) {
-      minDiff = diff;
-      outputFreq = frequencyChart[harmonicSeries][i];
+    freqToCheck = frequencyChart[harmonicSeries][i];
+    bin = round(freqToCheck * SAMPLES / SAMPLING_FREQUENCY);
+    if (vReal[bin] > maxAmp) {
+      if (i > 3) { // Filter out overtones that were detected as the prominent frequency
+        pFundFreq = frequencyChart[harmonicSeries][(i - 2) / 2]; // (Possible) fundamental frequency, in case detected maxAmp was an overtone
+        binFund = round(pFundFreq * SAMPLES / SAMPLING_FREQUENCY);
+        if (vReal[bin] / vReal[binFund] > OVERTONE_THRES) { // Only set freqToCheck as targetFreq if amplitude is sufficiently larger than pFundFreq
+          maxAmp = vReal[bin];
+          targetFreq = freqToCheck;
+        }
+      }
+      else { // Lower harmonic pitches do not need an overtone check (because they cannot be overtones)
+        maxAmp = vReal[bin];
+        targetFreq = freqToCheck;
+      }
     }
   }
-
-  return outputFreq;
-}
-
-
-// Find the max amplitude of the FFT output
-float getMaxAmp(float* vReal) {
-  float maxAmp = 0;
-  for (int i = 0; i < SAMPLES; i++) {
-    if (vReal[i] > maxAmp) {
-      maxAmp = vReal[i];
-    }
-  }
-  return maxAmp;
+  out[0] = targetFreq;
+  out[1] = maxAmp;
+  return out;
 }
 
 
@@ -161,6 +173,21 @@ void populateSinTable(const float* harmonics) {
 }
 
 
+void checkPot() {
+  param = analogRead(potPin) / 2048;
+
+  if (param != prevParam) {
+    if (param < 1) {
+      populateSinTable(tpt_enriched);
+    }
+    else {
+      populateSinTable(woodwindHarmonics);
+    }
+  }
+  prevParam = param;
+}
+
+
 unsigned long lastDebugPrint = 0;
 
 void printTimingStats() {
@@ -186,29 +213,36 @@ void printTimingStats() {
 }
 
 
-void printHarmonicAmplitudes(int harmonicSeries) {
-    char buffer[256];
-    int index = 0;
+void printFFTForVisualizer() {
+    static char fftBuf[2048];
+    int idx = 0;
 
-    // Start marker
-    index += sprintf(buffer + index, "---\n");
+    idx += sprintf(fftBuf + idx, "<FFT>");
 
-    for (int i = 0; i < 7; i++) {
-        float targetFreq = frequencyChart[harmonicSeries][i];
-        int bin = round(targetFreq * SAMPLES / SAMPLING_FREQUENCY);
-
-        float amp = 0;
-        if (bin >= 0 && bin < SAMPLES) amp = vReal[bin];
-
-        index += sprintf(buffer + index, "%.4f\n", amp);
+    for (int i = 0; i < SAMPLES / 2; i++) {
+        idx += sprintf(fftBuf + idx, "%.4f", vReal[i]);
+        if (i < SAMPLES / 2 - 1) {
+            fftBuf[idx++] = ',';
+        }
     }
 
-    buffer[index] = '\0';
+    idx += sprintf(fftBuf + idx, "</FFT>\n");
+    fftBuf[idx] = '\0';
 
-    Serial.print(buffer);
+    Serial.print(fftBuf);
 }
 
-unsigned long lastHarmonicPrint = 0;
+
+void printDetectedPeak(float freq) {
+    static char buf[32];
+    int idx = 0;
+
+    idx += sprintf(buf + idx, "<PEAK>");
+    idx += sprintf(buf + idx, "%.1f", freq);
+    idx += sprintf(buf + idx, "</PEAK>\n");
+
+    Serial.print(buf);
+}
 
 
 void FFTtask(void* pvParameters) {
@@ -232,18 +266,19 @@ void FFTtask(void* pvParameters) {
     // Compute the number of semitones to go down from the open harmonic based on the valve combination
     numSemitones = 2 * (analogRead(valvePins[0]) > VALVE_PRESS) + (analogRead(valvePins[1]) > VALVE_PRESS) + 3 * (analogRead(valvePins[2]) > VALVE_PRESS);
 
-    unsigned long now = millis();
+    /*unsigned long now = millis();
     if (now - lastHarmonicPrint >= 500) {   // 10 seconds = 10000 ms
         //printHarmonicAmplitudes(numSemitones);
-        Serial.println(FFT.majorPeak());
+        //Serial.println(FFT.majorPeak());
         lastHarmonicPrint = now;
-    }
+    }*/
 
-    float localAmplitude = getMaxAmp(vReal);
+    float* pitchInfo = getTargetFreqAndAmp(numSemitones); // pitchInfo: {target frequency, amplitude}
+    float localAmplitude = pitchInfo[1];
     float localDetectedFreq = 0;
     
     if (localAmplitude > MIN_AMPLITUDE) {
-      localDetectedFreq = computeOutput(FFT.majorPeak(), numSemitones);
+      localDetectedFreq = pitchInfo[0];
     }
 
     portENTER_CRITICAL(&mux);
@@ -271,6 +306,8 @@ void AudioTask(void* pvParameters) {
       changeFreq = false;
     }
     portEXIT_CRITICAL(&mux);
+
+    checkPot();
 
     // Process frequency change
     if (hasNewData) {
