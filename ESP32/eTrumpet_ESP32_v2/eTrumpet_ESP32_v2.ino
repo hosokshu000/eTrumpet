@@ -104,7 +104,7 @@ int prevParam = 0;
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
 
-// Returns the frequency and amplitude of the most prominent pitch of the current harmonic series, based on the FFT output (vReal array)
+/*// Returns the frequency and amplitude of the most prominent pitch of the current harmonic series, based on the FFT output (vReal array)
 float* getTargetFreqAndAmp(int harmonicSeries) {
   static float out[2];  // {frequency, amplitude}
   float freqToCheck = frequencyChart[harmonicSeries][0]; // Frequency being compared
@@ -136,6 +136,88 @@ float* getTargetFreqAndAmp(int harmonicSeries) {
   }
   out[0] = targetFreq;
   out[1] = maxAmp;
+  return out;
+}*/
+
+
+float* getTargetFreqAndAmp(int harmonicSeries) {
+  static float out[2];
+
+  // 1) Quick sanity check
+  if (harmonicSeries < 0 || harmonicSeries > 6) {
+    out[0] = 0.0f;
+    out[1] = 0.0f;
+    return out;
+  }
+
+  // 2) Compute a stable noise floor using UPPER FFT bins (safe for trumpet)
+  float noiseSum = 0.0f;
+  int noiseCount = 0;
+
+  // use top 25% of FFT bins (no trumpet content here)
+  int startBin = (SAMPLES / 2) * 0.75;   // e.g. for 128 → start at bin 48
+  int endBin   = SAMPLES / 2;            // real FFT half
+
+  for (int b = startBin; b < endBin; b++) {
+    noiseSum += vReal[b];
+    noiseCount++;
+  }
+
+  float noiseFloor = (noiseCount > 0) ? (noiseSum / noiseCount) : 0.0f;
+
+  // 3) Thresholds
+  float mainThreshold = max((float)MIN_AMPLITUDE, noiseFloor * 3.0f);
+  float supportThreshold = max(0.001f, mainThreshold * 0.45f);
+
+  // 4) Precompute FFT bins + amplitudes for 7 partials
+  int bins[7];
+  float amps[7];
+
+  for (int i = 0; i < 7; i++) {
+    float f = frequencyChart[harmonicSeries][i];
+    int bin = round(f * SAMPLES / SAMPLING_FREQUENCY);
+
+    if (bin < 0) bin = 0;
+    if (bin >= SAMPLES) bin = SAMPLES - 1;
+
+    bins[i] = bin;
+    amps[i] = vReal[bin];
+  }
+
+  // 5) Scan from lowest partial (index 0)
+  int chosenIndex = -1;
+
+  for (int m = 0; m < 7; m++) {
+    if (amps[m] < mainThreshold) continue;  // not strong enough alone
+
+    // look for any supporting higher harmonic
+    for (int h = m + 1; h < 7; h++) {
+      if (amps[h] >= supportThreshold) {
+        chosenIndex = m;  // lowest supported partial → the played note
+        break;
+      }
+    }
+
+    if (chosenIndex >= 0) break;
+  }
+
+  // 6) Fallback: choose strongest partial among 0..6
+  if (chosenIndex < 0) {
+    float bestAmp = -1.0f;
+    int bestIdx = 0;
+
+    for (int i = 0; i < 7; i++) {
+      if (amps[i] > bestAmp) {
+        bestAmp = amps[i];
+        bestIdx = i;
+      }
+    }
+
+    chosenIndex = bestIdx;
+  }
+
+  out[0] = frequencyChart[harmonicSeries][chosenIndex];
+  out[1] = amps[chosenIndex];
   return out;
 }
 
