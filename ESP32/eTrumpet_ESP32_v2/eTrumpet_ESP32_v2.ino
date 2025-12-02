@@ -104,59 +104,22 @@ int prevParam = 0;
 portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
 
-/*// Returns the frequency and amplitude of the most prominent pitch of the current harmonic series, based on the FFT output (vReal array)
-float* getTargetFreqAndAmp(int harmonicSeries) {
-  static float out[2];  // {frequency, amplitude}
-  float freqToCheck = frequencyChart[harmonicSeries][0]; // Frequency being compared
-  int bin = round(freqToCheck * SAMPLES / SAMPLING_FREQUENCY); // Index of freqToCheck in vReal array
-  float maxAmp = vReal[bin]; // Initialize to the first harmonic frequency amplitude
-  float targetFreq = frequencyChart[harmonicSeries][0];
-
-  // Overtone filter-related variables
-  float pFundFreq = 0;
-  int binFund = 0;
-
-  for (int i = 1; i < 7; i++) {
-    freqToCheck = frequencyChart[harmonicSeries][i];
-    bin = round(freqToCheck * SAMPLES / SAMPLING_FREQUENCY);
-    if (vReal[bin] > maxAmp) {
-      if (i > 3) { // Filter out overtones that were detected as the prominent frequency
-        pFundFreq = frequencyChart[harmonicSeries][(i - 2) / 2]; // (Possible) fundamental frequency, in case detected maxAmp was an overtone
-        binFund = round(pFundFreq * SAMPLES / SAMPLING_FREQUENCY);
-        if (vReal[bin] / vReal[binFund] > OVERTONE_THRES) { // Only set freqToCheck as targetFreq if amplitude is sufficiently larger than pFundFreq
-          maxAmp = vReal[bin];
-          targetFreq = freqToCheck;
-        }
-      }
-      else { // Lower harmonic pitches do not need an overtone check (because they cannot be overtones)
-        maxAmp = vReal[bin];
-        targetFreq = freqToCheck;
-      }
-    }
-  }
-  out[0] = targetFreq;
-  out[1] = maxAmp;
-  return out;
-}*/
-
-
+// Determines partial from FFT output by finding lowest supported note in harmonic series
 float* getTargetFreqAndAmp(int harmonicSeries) {
   static float out[2];
 
-  // 1) Quick sanity check
   if (harmonicSeries < 0 || harmonicSeries > 6) {
     out[0] = 0.0f;
     out[1] = 0.0f;
     return out;
   }
 
-  // 2) Compute a stable noise floor using UPPER FFT bins (safe for trumpet)
+  // Compute a noise floor using upper FFT bins
   float noiseSum = 0.0f;
   int noiseCount = 0;
 
-  // use top 25% of FFT bins (no trumpet content here)
-  int startBin = (SAMPLES / 2) * 0.75;   // e.g. for 128 → start at bin 48
-  int endBin   = SAMPLES / 2;            // real FFT half
+  int startBin = (SAMPLES / 2) * 0.75;
+  int endBin   = SAMPLES / 2;
 
   for (int b = startBin; b < endBin; b++) {
     noiseSum += vReal[b];
@@ -165,11 +128,9 @@ float* getTargetFreqAndAmp(int harmonicSeries) {
 
   float noiseFloor = (noiseCount > 0) ? (noiseSum / noiseCount) : 0.0f;
 
-  // 3) Thresholds
   float mainThreshold = max((float)MIN_AMPLITUDE, noiseFloor * 3.0f);
   float supportThreshold = max(0.001f, mainThreshold * 0.45f);
 
-  // 4) Precompute FFT bins + amplitudes for 7 partials
   int bins[7];
   float amps[7];
 
@@ -184,16 +145,15 @@ float* getTargetFreqAndAmp(int harmonicSeries) {
     amps[i] = vReal[bin];
   }
 
-  // 5) Scan from lowest partial (index 0)
   int chosenIndex = -1;
 
   for (int m = 0; m < 7; m++) {
-    if (amps[m] < mainThreshold) continue;  // not strong enough alone
+    if (amps[m] < mainThreshold) continue;  // Not strong enough alone
 
-    // look for any supporting higher harmonic
+    // Look for supporting higher harmonic
     for (int h = m + 1; h < 7; h++) {
       if (amps[h] >= supportThreshold) {
-        chosenIndex = m;  // lowest supported partial → the played note
+        chosenIndex = m;
         break;
       }
     }
@@ -201,7 +161,6 @@ float* getTargetFreqAndAmp(int harmonicSeries) {
     if (chosenIndex >= 0) break;
   }
 
-  // 6) Fallback: choose strongest partial among 0..6
   if (chosenIndex < 0) {
     float bestAmp = -1.0f;
     int bestIdx = 0;
@@ -255,18 +214,36 @@ void populateSinTable(const float* harmonics) {
 }
 
 
-void checkPot() {
-  param = analogRead(potPin) / 2048;
+// mode parameter - 0: Timbre, 1: Pitch Modulation, 2: Vibrato, 3: Change Octave
+void checkPot(int mode, volatile float* freq) {
+  if (mode == 0) {
+    param = analogRead(potPin) / 2048;
 
-  if (param != prevParam) {
-    if (param < 1) {
-      populateSinTable(tpt_enriched);
+    if (param != prevParam) {
+      if (param < 1) {
+        populateSinTable(tpt_enriched);
+      }
+      else {
+        populateSinTable(woodwindHarmonics);
+      }
     }
-    else {
-      populateSinTable(woodwindHarmonics);
+    prevParam = param;
+  } else if (mode == 1) {
+    param = analogRead(potPin);
+    float depth = 0.03;  // Adjust for more/less pitch modulation
+    float modAmount = *freq * depth * (float)param / 4095;
+    *freq += modAmount;
+    if (modAmount > 0) {
+      changeFreq = true;
+    }
+  } else if (mode == 2) {
+
+  } else if (mode == 3) {
+    if (analogRead(potPin) / 2048 > 0) {
+      *freq = 1046.50;
+      changeFreq = true;
     }
   }
-  prevParam = param;
 }
 
 
@@ -379,6 +356,8 @@ void AudioTask(void* pvParameters) {
     float localFreq = 0;
     float localAmplitude = 0;
     bool hasNewData = false;
+
+    checkPot(1, &detectedFreq);
     
     portENTER_CRITICAL(&mux);
     if (changeFreq) {
@@ -388,8 +367,6 @@ void AudioTask(void* pvParameters) {
       changeFreq = false;
     }
     portEXIT_CRITICAL(&mux);
-
-    checkPot();
 
     // Process frequency change
     if (hasNewData) {
